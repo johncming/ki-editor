@@ -31,17 +31,13 @@ pub fn alien_blood() -> Theme {
         }),
         ui: UiStyles {
             global_title: Style::new()
-                .foreground_color(hex!("#0f1610"))
-                .background_color(hex!("#2f7e25")),
+                .foreground_color(hex!("#112616"))
+                .underline(hex!("#2f7e25")),
             window_title_focused: Style::new()
                 .foreground_color(hex!("#73fa91"))
-                .background_color(hex!("#112616")),
-            window_title_unfocused: Style::new()
-                .foreground_color(hex!("#647d75"))
-                .background_color(hex!("#0f1610")),
-            focused_tab: Style::new()
-                .foreground_color(hex!("#112616"))
-                .background_color(hex!("#18e000")),
+                .underline(hex!("#2f7e25")),
+            window_title_unfocused: fg(hex!("#647d75")),
+            focused_tab: fg(hex!("#112616")),
             parent_lines_background: hex!("#1a2b1e"),
             section_divider_background: hex!("#1a2b1e"),
             jump_mark_odd: Style::new()

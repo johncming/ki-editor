@@ -88,7 +88,7 @@ impl Editor {
             theme.ui.window_title_unfocused
         };
 
-        let title_grid = {
+        let mut title_grid = {
             let mut editor = Editor::from_text(None, &title);
             editor.set_regex_highlight_rules(
                 [RegexHighlightRule {
@@ -130,6 +130,15 @@ impl Editor {
                 &[],
             )
         };
+
+        // Apply window_title_style.line (underline) to all cells in title_grid
+        if let Some(line) = window_title_style.line {
+            for row in &mut title_grid.rows {
+                for cell in row {
+                    cell.line = Some(line);
+                }
+            }
+        }
         let grid = title_grid.merge_vertical(grid);
         let cursor_position = grid.get_cursor_position();
         let style = match self.mode {
