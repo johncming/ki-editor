@@ -109,7 +109,7 @@ impl Editor {
             };
             let theme = Theme {
                 ui: UiStyles {
-                    background_color: window_title_style.background_color.unwrap_or_default(),
+                    background_color: window_title_style.background_color,
                     text_foreground: window_title_style.foreground_color.unwrap_or_default(),
                     ..theme.ui
                 },

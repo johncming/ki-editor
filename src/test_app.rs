@@ -349,7 +349,7 @@ impl ExpectKind {
                     .grid;
                 contextualize(
                     grid.rows[*row_index][*column_index].background_color,
-                    *background_color,
+                    Some(*background_color),
                 )
             }
             GridCellLine(row_index, column_index, underline_color) => contextualize(

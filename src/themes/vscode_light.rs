@@ -44,7 +44,7 @@ pub fn vscode_light() -> Theme {
             jump_mark_even: Style::new()
                 .background_color(hex!("#84b701"))
                 .foreground_color(hex!("#ffffff")),
-            background_color: hex!("#ffffff"),
+            background_color: None, // transparent
             text_foreground: hex!("#333333"),
             primary_selection_background: hex!("#c7e6ff"),
             primary_selection_anchor_background: hex!("#add6ff"),

@@ -27,7 +27,8 @@ pub const LINE_NUMBER_VERTICAL_BORDER: &str = "│";
 pub struct Cell {
     pub symbol: char,
     pub foreground_color: Color,
-    pub background_color: Color,
+    /// `None` means transparent (use terminal default background)
+    pub background_color: Option<Color>,
     pub line: Option<CellLine>,
     pub is_cursor: bool,
     /// Need for folded sections where the cursor is not in them
@@ -66,10 +67,7 @@ impl Cell {
                 .style
                 .foreground_color
                 .unwrap_or(self.foreground_color),
-            background_color: update
-                .style
-                .background_color
-                .unwrap_or(self.background_color),
+            background_color: update.style.background_color.or(self.background_color),
             line: update.style.line.or(self.line),
             is_cursor: update.is_cursor || self.is_cursor,
             source: update.source.or_else(|| self.source.clone()),
@@ -85,7 +83,7 @@ impl Default for Cell {
         Cell {
             symbol: ' ',
             foreground_color: hex!("#ffffff"),
-            background_color: hex!("#ffffff"),
+            background_color: None,
             line: None,
             is_cursor: false,
             source: None,
@@ -622,10 +620,12 @@ impl Grid {
         result_grid
     }
 
-    fn set_background_color(mut self, background_color: Color) -> Self {
-        for row in self.rows.iter_mut() {
-            for cell in row {
-                cell.background_color = background_color;
+    fn set_background_color(mut self, background_color: Option<Color>) -> Self {
+        if let Some(color) = background_color {
+            for row in self.rows.iter_mut() {
+                for cell in row {
+                    cell.background_color = Some(color);
+                }
             }
         }
         self
@@ -976,7 +976,7 @@ mod test_grid {
                 actual
                     .to_positioned_cells()
                     .into_iter()
-                    .filter(|cell| cell.cell.background_color == color)
+                    .filter(|cell| cell.cell.background_color == Some(color))
                     .map(|cell| cell.position.column)
                     .collect_vec(),
                 (0..10)
@@ -1008,7 +1008,7 @@ mod test_grid {
                     Vec::new(),
                     &Theme {
                         ui: crate::themes::UiStyles {
-                            background_color,
+                            background_color: Some(background_color),
                             ..Default::default()
                         },
 
@@ -1022,7 +1022,7 @@ mod test_grid {
                 10,
                 cells
                     .iter()
-                    .filter(|cell| cell.cell.background_color == background_color)
+                    .filter(|cell| cell.cell.background_color == Some(background_color))
                     .count()
             );
         }
@@ -1163,7 +1163,7 @@ mod test_cell {
         let cell = Cell {
             symbol: 'a',
             foreground_color: hex!("#aaaaaa"),
-            background_color: hex!("#bbbbbb"),
+            background_color: Some(hex!("#bbbbbb")),
             line: Some(CellLine {
                 color: hex!("#cccccc"),
                 style: CellLineStyle::Undercurl,
@@ -1189,7 +1189,7 @@ mod test_cell {
         });
         assert_eq!(cell.symbol, 'b');
         assert_eq!(cell.foreground_color, hex!("#dddddd"));
-        assert_eq!(cell.background_color, hex!("#eeeeee"));
+        assert_eq!(cell.background_color, Some(hex!("#eeeeee")));
         assert!(cell.is_cursor);
         assert_eq!(cell.source, Some(StyleKey::UiMark));
         assert_eq!(

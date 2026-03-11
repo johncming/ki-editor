@@ -135,7 +135,7 @@ pub(super) fn from_theme_content(theme: ThemeContent) -> Theme {
             jump_mark_even: Style::new()
                 .background_color(hex!("#84b701"))
                 .foreground_color(hex!("#ffffff")),
-            background_color: background,
+            background_color: Some(background),
             text_foreground: text_color,
             primary_selection_background,
             primary_selection_anchor_background: primary_selection_background,

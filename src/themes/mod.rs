@@ -189,7 +189,8 @@ pub struct UiStyles {
     pub jump_mark_odd: Style,
     pub jump_mark_even: Style,
     pub text_foreground: Color,
-    pub background_color: Color,
+    /// `None` means transparent (use terminal default background)
+    pub background_color: Option<Color>,
     pub primary_selection_background: Color,
     pub primary_selection_anchor_background: Color,
     pub primary_selection_secondary_cursor: Style,
