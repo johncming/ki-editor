@@ -31,7 +31,7 @@ pub fn alien_blood() -> Theme {
         }),
         ui: UiStyles {
             global_title: Style::new()
-                .foreground_color(hex!("#112616"))
+                .foreground_color(hex!("#2a5a38"))
                 .underline(hex!("#2f7e25")),
             window_title_focused: Style::new()
                 .foreground_color(hex!("#112616"))
