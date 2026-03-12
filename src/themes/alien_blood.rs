@@ -65,7 +65,7 @@ pub fn alien_blood() -> Theme {
             border: Style::new()
                 .background_color(hex!("#0f1610"))
                 .foreground_color(hex!("#2f7e25")),
-            mark: Style::new().background_color(hex!("#717f24")),
+            mark: Style::new().background_color(hex!("#4a5a12")),
             possible_selection_background: hex!("#1d4125"),
             incremental_search_match_background: hex!("#2f7e25"),
             fuzzy_matched_char: Style::new().foreground_color(hex!("#18e000")),
