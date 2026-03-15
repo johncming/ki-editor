@@ -4941,6 +4941,7 @@ mod mouse_click_tests {
     use crate::selection::SelectionSet;
     use crate::selection::Selection;
     use crate::selection::CharIndex;
+    use crate::selection::SelectionMode;
     use crate::context::Context;
     use std::rc::Rc;
     use std::cell::RefCell;
@@ -5101,6 +5102,81 @@ mod mouse_click_tests {
         let editor = create_test_editor("line1\nline2\nline3");
         // 3 lines -> "3" is 1 digit + 1 border = 2
         assert_eq!(editor.get_line_number_width(), 2);
+    }
+
+    #[test]
+    fn test_click_respects_line_mode() {
+        let mut editor = create_test_editor("hello\nworld\nfoo");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Line
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Line);
+
+        let context = Context::default();
+        // Click on second line (row 1, after line number)
+        // Line number width for 3 lines = 2, so click at column 2 + 1 = 3
+        let result = editor.handle_mouse_click(3, 1, &context);
+
+        assert!(result.is_ok());
+        // In Line mode, should select entire line "world"
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        let buffer = editor.buffer.borrow();
+        let selected_text: String = buffer.slice(&range).unwrap().to_string();
+        assert_eq!(selected_text, "world");
+    }
+
+    #[test]
+    fn test_click_respects_word_mode() {
+        let mut editor = create_test_editor("hello world");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Word
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Word);
+
+        let context = Context::default();
+        // Click in middle of "world" (after line number)
+        // "world" starts at column 6, so click around column 8
+        let result = editor.handle_mouse_click(8, 0, &context);
+
+        assert!(result.is_ok());
+        // In Word mode, should select "world"
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        let buffer = editor.buffer.borrow();
+        let selected_text: String = buffer.slice(&range).unwrap().to_string();
+        assert_eq!(selected_text, "world");
+    }
+
+    #[test]
+    fn test_click_character_mode_empty_selection() {
+        let mut editor = create_test_editor("hello world");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Character
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
+
+        let context = Context::default();
+        // Click at column 7 (after line number width of 1)
+        // This should place cursor at buffer column 6 (character 'w')
+        let result = editor.handle_mouse_click(7, 0, &context);
+
+        assert!(result.is_ok());
+        // In Character mode, cursor should be at expected position
+        // Line number width = 1 digit + 1 border = 2
+        // Click at column 7 -> buffer column 5 (7 - 2 = 5)
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 5);
     }
 }
 
