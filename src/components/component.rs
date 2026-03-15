@@ -121,7 +121,7 @@ pub trait Component: Any + AnyComponent {
         let dispatches = match event {
             Event::Key(event) => self.handle_key_event(context, event)?,
             Event::Paste(content) => self.handle_paste_event(content, context)?,
-            Event::Mouse(event) => self.handle_mouse_event(event)?,
+            Event::Mouse(event) => self.handle_mouse_event(event, context)?,
             _ => Dispatches::default(),
         };
         self.post_handle_event(dispatches)
@@ -143,8 +143,9 @@ pub trait Component: Any + AnyComponent {
     fn handle_mouse_event(
         &mut self,
         event: crossterm::event::MouseEvent,
+        context: &Context,
     ) -> anyhow::Result<Dispatches> {
-        self.editor_mut().handle_mouse_event(event)
+        self.editor_mut().handle_mouse_event(event, context)
     }
 
     fn handle_key_event(

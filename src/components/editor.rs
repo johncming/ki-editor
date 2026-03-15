@@ -142,6 +142,7 @@ impl Component for Editor {
     fn handle_mouse_event(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
+        context: &Context,
     ) -> anyhow::Result<Dispatches> {
         const SCROLL_HEIGHT: usize = 2;
         match mouse_event.kind {
@@ -153,7 +154,9 @@ impl Component for Editor {
                 self.apply_scroll(Direction::End, SCROLL_HEIGHT);
                 Ok(Dispatches::default())
             }
-            MouseEventKind::Down(MouseButton::Left) => Ok(Dispatches::default()),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.handle_mouse_click(mouse_event.column, mouse_event.row, context)
+            }
             _ => Ok(Dispatches::default()),
         }
     }
@@ -185,7 +188,7 @@ impl Component for Editor {
                 Texts::new(NonEmpty::singleton(content)),
                 context,
             ),
-            event::event::Event::Mouse(event) => self.handle_mouse_event(event),
+            event::event::Event::Mouse(event) => self.handle_mouse_event(event, context),
             _ => Ok(Dispatches::default()),
         }
     }
