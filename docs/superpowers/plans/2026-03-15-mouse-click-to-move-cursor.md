@@ -151,33 +151,12 @@ Expected results: component.rs trait definition and editor.rs implementation
 
 - [ ] **Step 2: Update trait definition in component.rs**
 
-Modify trait method in `src/components/component.rs` around line 143:
-
-Change from:
-```rust
-fn handle_mouse_event(
-    &mut self,
-    event: crossterm::event::MouseEvent,
-) -> anyhow::Result<Dispatches> {
-    self.editor_mut().handle_mouse_event(event)
-}
-```
-
-To:
-```rust
-fn handle_mouse_event(
-    &mut self,
-    event: crossterm::event::MouseEvent,
-    context: &Context,
-) -> anyhow::Result<Dispatches> {
-    self.editor_mut().handle_mouse_event(event, context)
-}
-```
+Modify trait method in `src/components/component.rs` around line 143. Change method signature to add `context: &Context` parameter and pass it to editor implementation.
 
 - [ ] **Step 2.5: Verify trait signature change**
 
 Run: `cargo check --package ki`
-Expected: Compiler reports that Editor's `handle_mouse_event` signature doesn't match trait (missing `context` parameter)
+Expected: Compiler error - Editor's `handle_mouse_event` signature doesn't match trait (missing `context` parameter)
 This confirms the trait change is detected before we fix the implementation.
 
 Change from:
@@ -203,54 +182,7 @@ fn handle_mouse_event(
 
 - [ ] **Step 3: Update Editor implementation in editor.rs**
 
-Modify implementation in `src/components/editor.rs` around line 142.
-
-Change from:
-```rust
-fn handle_mouse_event(
-    &mut self,
-    mouse_event: crossterm::event::MouseEvent,
-) -> anyhow::Result<Dispatches> {
-    const SCROLL_HEIGHT: usize = 2;
-    match mouse_event.kind {
-        MouseEventKind::ScrollUp => {
-            self.apply_scroll(Direction::Start, SCROLL_HEIGHT);
-            Ok(Dispatches::default())
-        }
-        MouseEventKind::ScrollDown => {
-            self.apply_scroll(Direction::End, SCROLL_HEIGHT);
-            Ok(Dispatches::default())
-        }
-        MouseEventKind::Down(MouseButton::Left) => Ok(Dispatches::default()),
-        _ => Ok(Dispatches::default()),
-    }
-}
-```
-
-To:
-```rust
-fn handle_mouse_event(
-    &mut self,
-    mouse_event: crossterm::event::MouseEvent,
-    context: &Context,
-) -> anyhow::Result<Dispatches> {
-    const SCROLL_HEIGHT: usize = 2;
-    match mouse_event.kind {
-        MouseEventKind::ScrollUp => {
-            self.apply_scroll(Direction::Start, SCROLL_HEIGHT);
-            Ok(Dispatches::default())
-        }
-        MouseEventKind::ScrollDown => {
-            self.apply_scroll(Direction::End, SCROLL_HEIGHT);
-            Ok(Dispatches::default())
-        }
-        MouseEventKind::Down(MouseButton::Left) => {
-            self.handle_mouse_click(mouse_event.column, mouse_event.row, context)
-        }
-        _ => Ok(Dispatches::default()),
-    }
-}
-```
+Find `handle_mouse_event` implementation in `src/components/editor.rs`. Update the function signature to add `context: &Context` parameter. In the `Down(MouseButton::Left)` match arm, replace the current `Ok(Dispatches::default())` with `self.handle_mouse_click(mouse_event.column, mouse_event.row, context)`.
 
 - [ ] **Step 4: Check for other handle_mouse_event calls**
 
