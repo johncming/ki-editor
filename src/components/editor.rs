@@ -2164,6 +2164,15 @@ impl Editor {
         ))
     }
 
+    pub(crate) fn get_line_number_width(&self) -> usize {
+        let buffer = self.buffer.borrow();
+        let line_count = buffer.len_lines();
+        // Width = digits for last line number + vertical border character (│)
+        // Matches calculation in src/grid.rs:357
+        let line_number_digits = line_count.max(1).to_string().len();
+        line_number_digits + 1
+    }
+
     /// Get the selection that preserves the syntactic structure of the current selection.
     ///
     /// Returns a valid edit transaction if there is any, otherwise `Left(current_selection)`.
