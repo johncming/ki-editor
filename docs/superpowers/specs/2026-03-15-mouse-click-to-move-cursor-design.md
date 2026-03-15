@@ -30,9 +30,9 @@ Add support for mouse click navigation in Ki editor. Users will be able to move 
 │  MouseEvent::Down(Left)                                         │
 │         │                                                       │
 │         ▼                                                       │
-│  handle_mouse_event() ──> handle_mouse_click(col, row)         │
-│                               │                               │
-│                               ▼                               │
+│  handle_mouse_event(context, event) ──> handle_mouse_click(...)  │
+│                                            │               │
+│                                            ▼               │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │ 1. Check if click is within editor rectangle           │   │
 │  │    (Rectangle::contains)                              │   │
@@ -54,7 +54,7 @@ Add support for mouse click navigation in Ki editor. Users will be able to move 
 │  │                                                         │   │
 │  │ 6. Clear multi-cursor if in MultiCursor mode             │   │
 │  │                                                         │   │
-│  │ 7. Call set_cursor_position(buffer_row, buffer_col)      │   │
+│  │ 7. Call set_cursor_position(buffer_row, buffer_col, context)│
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -62,13 +62,30 @@ Add support for mouse click navigation in Ki editor. Users will be able to move 
 
 ### File Modifications
 
-#### 1. `src/components/editor.rs`
+#### 1. `src/components/component.rs`
 
-**Modify `handle_mouse_event`:**
+**Modify `handle_mouse_event` trait method signature to accept `Context`:**
 
 ```rust
-fn handle_mouse_event(&mut self, mouse_event: crossterm::event::MouseEvent)
-    -> anyhow::Result<Dispatches> {
+fn handle_mouse_event(
+    &mut self,
+    event: crossterm::event::MouseEvent,
+    context: &Context,
+) -> anyhow::Result<Dispatches> {
+    self.editor_mut().handle_mouse_event(event, context)
+}
+```
+
+#### 2. `src/components/editor.rs`
+
+**Modify `handle_mouse_event` signature to accept `Context`:**
+
+```rust
+fn handle_mouse_event(
+    &mut self,
+    mouse_event: crossterm::event::MouseEvent,
+    context: &Context,
+) -> anyhow::Result<Dispatches> {
     const SCROLL_HEIGHT: usize = 2;
     match mouse_event.kind {
         MouseEventKind::ScrollUp => {
@@ -80,7 +97,7 @@ fn handle_mouse_event(&mut self, mouse_event: crossterm::event::MouseEvent)
             Ok(Dispatches::default())
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            self.handle_mouse_click(mouse_event.column, mouse_event.row)
+            self.handle_mouse_click(mouse_event.column, mouse_event.row, context)
         }
         _ => Ok(Dispatches::default()),
     }
@@ -94,6 +111,7 @@ fn handle_mouse_click(
     &mut self,
     mouse_column: u16,
     mouse_row: u16,
+    context: &Context,
 ) -> anyhow::Result<Dispatches> {
     // Check if click is within editor rectangle
     let mouse_pos = Position::new(mouse_row as usize, mouse_column as usize);
@@ -130,12 +148,13 @@ fn handle_mouse_click(
     drop(buffer);
 
     // Clear multi-cursor if in MultiCursor mode
+    // Note: In Normal, Insert, or other modes, clicking does not affect mode
     if matches!(self.mode, Mode::MultiCursor) {
         self.mode = Mode::Normal;
     }
 
     // Set cursor position (existing function)
-    self.set_cursor_position(buffer_row, buffer_col, &Context::default())
+    self.set_cursor_position(buffer_row, buffer_col, context)
 }
 ```
 
@@ -145,17 +164,14 @@ fn handle_mouse_click(
 fn get_line_number_width(&self) -> usize {
     let buffer = self.buffer.borrow();
     let line_count = buffer.len_lines();
-    // Width = digits + vertical border character (│)
-    let digits = if line_count == 0 {
-        1
-    } else {
-        (line_count + 1).ilog10() as usize + 1
-    };
-    digits + 1
+    // Width = digits for last line number + vertical border character (│)
+    // Matches the calculation in src/grid.rs:357
+    let line_number_digits = line_count.max(1).to_string().len();
+    line_number_digits + 1
 }
 ```
 
-#### 2. `src/rectangle.rs`
+#### 3. `src/rectangle.rs`
 
 **Add `contains` method:**
 
@@ -193,7 +209,7 @@ fn test_rectangle_contains() {
         height: 4,
     };
 
-    // Inside points
+    // Inside points (inclusive of origin, exclusive of bounds)
     assert!(rect.contains(&Position::new(2, 3)));
     assert!(rect.contains(&Position::new(5, 7)));
 
@@ -209,22 +225,86 @@ fn test_rectangle_contains() {
 
 ```rust
 #[test]
-fn test_mouse_click_moves_cursor() {
-    let mut editor = Editor::new(...);
+fn test_valid_mouse_click_moves_cursor() {
+    let mut editor = create_editor_with_content("hello\nworld\nfoo");
+    editor.set_scroll_offset(0);
+    editor.set_rectangle(Rectangle {
+        origin: Position::new(0, 0),
+        width: 20,
+        height: 10,
+    }, &context);
 
-    // Valid click should move cursor
-    editor.handle_mouse_click(column, row)?;
-    assert_eq!(editor.cursor_position(), expected_position);
+    // Click on 'o' in "hello" (line 0, column 2 in buffer)
+    // After line number (3 digits for "100" + 1 for border = 4)
+    let mouse_column = 4 + 2; // 6
+    let mouse_row = 0;
+
+    let dispatches = editor.handle_mouse_click(mouse_column, mouse_row, &context)?;
+
+    // Cursor should move to position (0, 2)
+    assert_eq!(editor.cursor_position(), Position::new(0, 2));
+    assert!(dispatches.is_empty()); // No side dispatches expected
 }
 
 #[test]
 fn test_click_in_line_number_area_ignored() {
-    // Clicking in line number area should not move cursor
+    let mut editor = create_editor_with_content("hello\nworld");
+    editor.set_rectangle(Rectangle {
+        origin: Position::new(0, 0),
+        width: 20,
+        height: 10,
+    }, &context);
+
+    let initial_position = editor.cursor_position();
+
+    // Click in line number area (column 0-3)
+    let dispatches = editor.handle_mouse_click(2, 0, &context)?;
+
+    // Cursor should not move
+    assert_eq!(editor.cursor_position(), initial_position);
+    assert!(dispatches.is_empty());
 }
 
 #[test]
 fn test_click_outside_file_bounds_ignored() {
-    // Clicking beyond file content should be ignored
+    let mut editor = create_editor_with_content("hello\nworld");
+    editor.set_rectangle(Rectangle {
+        origin: Position::new(0, 0),
+        width: 20,
+        height: 10,
+    }, &context);
+
+    let initial_position = editor.cursor_position();
+
+    // Click beyond file content (line 10, column 10)
+    let dispatches = editor.handle_mouse_click(15, 10, &context)?;
+
+    // Cursor should not move
+    assert_eq!(editor.cursor_position(), initial_position);
+    assert!(dispatches.is_empty());
+}
+
+#[test]
+fn test_click_clears_multi_cursor_mode() {
+    let mut editor = create_editor_with_content("hello world");
+    editor.mode = Mode::MultiCursor;
+    // Set up multiple cursors (implementation depends on how MultiCursor works)
+
+    let dispatches = editor.handle_mouse_click(8, 0, &context)?;
+
+    // Should be in Normal mode now
+    assert!(matches!(editor.mode, Mode::Normal));
+}
+
+#[test]
+fn test_click_in_insert_mode_stays_in_insert() {
+    let mut editor = create_editor_with_content("hello");
+    editor.mode = Mode::Insert;
+
+    let dispatches = editor.handle_mouse_click(8, 0, &context)?;
+
+    // Should still be in Insert mode
+    assert!(matches!(editor.mode, Mode::Insert));
 }
 ```
 
@@ -247,6 +327,36 @@ No new external dependencies required. Uses existing:
 - `ropey` (via Buffer) for text operations
 - Standard library for basic operations
 
+## Implementation Details
+
+### Coordinate System Assumptions
+
+The design makes the following assumptions about Ki's coordinate system:
+
+1. **Mouse coordinates** are 0-based (u16 from crossterm)
+2. **Rectangle origin** is the top-left corner of the editor area on screen
+3. **Buffer coordinates** are 0-based and represent character indices (not visual columns)
+4. **Line number width** is calculated as `max_line_number.max(1).to_string().len() + 1`
+   - Matches calculation in `src/grid.rs:357`
+   - The `+ 1` accounts for the vertical border character (│)
+
+### Visual Character Width
+
+Ki uses the `unicode_width` crate for handling multi-width Unicode characters (e.g., emoji 🦀 has width 2). However, this design operates at the buffer coordinate level (character indices), not at the visual display level. The mouse click position is converted from screen coordinates to buffer coordinates, and this conversion uses the assumption that within the text area, the click column maps directly to the character column in the buffer.
+
+If Ki implements visual column-to-buffer-column conversion (e.g., for properly positioning cursor after a multi-width character), this design will need to use that conversion instead of the simple offset calculation.
+
+### Mode Behavior
+
+| Current Mode | Click Behavior |
+|-------------|---------------|
+| Normal | Clear multi-cursor if active, stay in Normal |
+| Insert | Clear multi-cursor if active, stay in Insert |
+| MultiCursor | Clear all cursors, switch to Normal |
+| FindOneChar | Clear multi-cursor if active, stay in FindOneChar |
+| Swap | Clear multi-cursor if active, stay in Swap |
+| Replace | Clear multi-cursor if active, stay in Replace |
+
 ## Future Extensions
 
 This design can be extended to support:
@@ -258,13 +368,3 @@ This design can be extended to support:
 5. **Right-click** - Context menu
 
 These can be added by extending the `MouseEventKind` match in `handle_mouse_event` without requiring architectural changes.
-
-## Implementation Notes
-
-1. The `set_cursor_position` function currently uses `Context::default()` which may need adjustment depending on actual runtime context requirements.
-
-2. The `get_line_number_width` calculation assumes the line number area is always the same width. If Ki supports variable line number formatting, this will need adjustment.
-
-3. Coordinate calculation assumes 1:1 mapping between screen cells and buffer characters. If Ki implements visual character width handling (e.g., for Unicode), the column calculation will need to account for this.
-
-4. The design assumes `scroll_offset` is available as a field on `Editor`. If the actual field name differs, the implementation will need adjustment.
