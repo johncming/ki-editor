@@ -2173,6 +2173,56 @@ impl Editor {
         line_number_digits + 1
     }
 
+    pub(crate) fn handle_mouse_click(
+        &mut self,
+        mouse_column: u16,
+        mouse_row: u16,
+        context: &Context,
+    ) -> anyhow::Result<Dispatches> {
+        // Check if click is within editor rectangle
+        let mouse_pos = Position::new(mouse_row as usize, mouse_column as usize);
+
+        if !self.rectangle.contains(&mouse_pos) {
+            return Ok(Dispatches::default());
+        }
+
+        // Calculate relative position
+        let relative_row = mouse_row as usize - self.rectangle.origin.line;
+        let relative_col = mouse_column as usize - self.rectangle.origin.column;
+
+        // Check if click is in line number area
+        let line_number_width = self.get_line_number_width();
+        if relative_col < line_number_width {
+            return Ok(Dispatches::default());
+        }
+
+        // Calculate buffer position
+        let buffer_row = relative_row + self.scroll_offset;
+        let buffer_col = relative_col - line_number_width;
+
+        // Validate buffer position
+        let buffer = self.buffer.borrow();
+        let total_lines = buffer.len_lines();
+        if buffer_row >= total_lines {
+            return Ok(Dispatches::default());
+        }
+
+        let line_content = buffer.get_line_by_line_index(buffer_row)?;
+        if buffer_col > line_content.len_chars() {
+            return Ok(Dispatches::default());
+        }
+        drop(buffer);
+
+        // Clear multi-cursor if in MultiCursor mode
+        // Note: In Normal, Insert, or other modes, clicking does not affect mode
+        if matches!(self.mode, Mode::MultiCursor) {
+            self.mode = Mode::Normal;
+        }
+
+        // Set cursor position (existing function)
+        self.set_cursor_position(buffer_row, buffer_col, context)
+    }
+
     /// Get the selection that preserves the syntactic structure of the current selection.
     ///
     /// Returns a valid edit transaction if there is any, otherwise `Left(current_selection)`.
@@ -4862,3 +4912,177 @@ impl std::fmt::Display for SurroundKind {
 
 const INDENT_CHAR: char = ' ';
 const INDENT_WIDTH: usize = 4;
+
+#[cfg(test)]
+mod mouse_click_tests {
+    use super::*;
+    use crate::buffer::Buffer;
+    use crate::components::editor::Mode;
+    use crate::position::Position;
+    use crate::rectangle::Rectangle;
+    use crate::selection::SelectionSet;
+    use crate::selection::Selection;
+    use crate::selection::CharIndex;
+    use crate::context::Context;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    use nonempty::NonEmpty;
+
+    fn create_test_editor(content: &str) -> Editor {
+        let buffer = Rc::new(RefCell::new(
+            Buffer::new(None, content)
+        ));
+        Editor {
+            mode: Mode::Normal,
+            selection_set: SelectionSet::default(),
+            cursor_direction: crate::components::editor::Direction::Start,
+            scroll_offset: 0,
+            rectangle: Rectangle::default(),
+            buffer,
+            title: None,
+            id: crate::components::component::ComponentId::new(),
+            current_view_alignment: None,
+            regex_highlight_rules: Vec::new(),
+            incremental_search_matches: None,
+            jumps: None,
+            normal_mode_override: None,
+            reveal: None,
+            visible_line_ranges: None,
+            copied_text_history_offset: Default::default(),
+        }
+    }
+
+    fn get_cursor_position(editor: &Editor) -> anyhow::Result<Position> {
+        let char_index = editor.get_cursor_char_index();
+        editor.buffer.borrow().char_to_position(char_index)
+    }
+
+    #[test]
+    fn test_valid_mouse_click_moves_cursor() {
+        let mut editor = create_test_editor("hello\nworld\nfoo");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Line number width for 3 lines: "3" = 1 digit + 1 border = 2
+        // Click on 'l' in "hello" - buffer column 2, screen column 4
+        let result = editor.handle_mouse_click(4, 0, &context);
+
+        assert!(result.is_ok());
+        // Check cursor moved to expected position
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 2);
+    }
+
+    #[test]
+    fn test_click_in_line_number_area_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        editor.selection_set = SelectionSet::default()
+            .set_selections(NonEmpty::new(
+                Selection::new((CharIndex(2)..CharIndex(2)).into())
+            ));
+
+        let context = Context::default();
+        let initial_head = get_cursor_position(&editor).unwrap();
+
+        let result = editor.handle_mouse_click(0, 0, &context);
+
+        assert!(result.is_ok());
+        // Cursor should not have moved
+        let current_head = get_cursor_position(&editor).unwrap();
+        assert_eq!(current_head, initial_head);
+    }
+
+    #[test]
+    fn test_click_outside_rectangle_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(5, 5),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let result = editor.handle_mouse_click(0, 0, &context);
+
+        assert!(result.is_ok());
+        // Click was outside rectangle, should be ignored
+        // Cursor should remain at initial position (0,0)
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+    }
+
+    #[test]
+    fn test_click_in_insert_mode_stays_in_insert() {
+        let mut editor = create_test_editor("hello");
+        editor.mode = Mode::Insert;
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let result = editor.handle_mouse_click(4, 0, &context);
+
+        assert!(result.is_ok());
+        // Should still be in Insert mode
+        assert!(matches!(editor.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn test_click_clears_multi_cursor_mode() {
+        let mut editor = create_test_editor("hello world");
+        editor.mode = Mode::MultiCursor;
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let result = editor.handle_mouse_click(4, 0, &context);
+
+        assert!(result.is_ok());
+        // Should be in Normal mode now
+        assert!(matches!(editor.mode, Mode::Normal));
+    }
+
+    #[test]
+    fn test_click_past_line_end_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let initial_head = get_cursor_position(&editor).unwrap();
+
+        // Click way past line end (column 100 when line is 5 chars)
+        let result = editor.handle_mouse_click(100, 0, &context);
+
+        assert!(result.is_ok());
+        // Cursor should not move
+        let current_head = get_cursor_position(&editor).unwrap();
+        assert_eq!(current_head, initial_head);
+    }
+
+    #[test]
+    fn test_get_line_number_width() {
+        let editor = create_test_editor("line1\nline2\nline3");
+        // 3 lines -> "3" is 1 digit + 1 border = 2
+        assert_eq!(editor.get_line_number_width(), 2);
+    }
+}
+
