@@ -2141,8 +2141,6 @@ impl Editor {
             .unwrap_or_default()
     }
 
-    // TODO: handle mouse click
-    #[allow(dead_code)]
     pub fn set_cursor_position(
         &mut self,
         row: usize,
