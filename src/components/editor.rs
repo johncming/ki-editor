@@ -5186,5 +5186,33 @@ mod mouse_click_tests {
         assert_eq!(position.line, 0);
         assert_eq!(position.column, 5);
     }
+
+    #[test]
+    fn test_click_on_last_line_positions_correctly() {
+        let mut editor = create_test_editor("hello\nworld");  // "world" has no trailing \n
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Line
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Line);
+
+        let context = Context::default();
+        // Click on last line "world" at column 2 ('r')
+        // Line number width for 2 lines = 2, so screen column = 2 + 2 = 4
+        let result = editor.handle_mouse_click(4, 1, &context);
+
+        assert!(result.is_ok());
+        // Cursor should be at exact position, not expand to include non-existent next line
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 1);
+        assert_eq!(position.column, 2);
+
+        // Explicitly verify selection is empty
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        assert_eq!(range.start, range.end, "Selection should be empty");
+    }
 }
 
