@@ -5106,7 +5106,7 @@ mod mouse_click_tests {
 
     #[test]
     fn test_click_respects_line_mode() {
-        let mut editor = create_test_editor("hello\nworld\nfoo");
+        let mut editor = create_test_editor("hello\nworld");
         editor.rectangle = Rectangle {
             origin: Position::new(0, 0),
             width: 20,
@@ -5116,17 +5116,21 @@ mod mouse_click_tests {
         editor.selection_set = editor.selection_set.set_mode(SelectionMode::Line);
 
         let context = Context::default();
-        // Click on second line (row 1, after line number)
-        // Line number width for 3 lines = 2, so click at column 2 + 1 = 3
-        let result = editor.handle_mouse_click(3, 1, &context);
+        // Click in middle of "world" on line 1 (0-indexed)
+        // Line number width for 2 lines = 2, so click at column 2 + 4 = 6
+        let result = editor.handle_mouse_click(6, 1, &context);
 
         assert!(result.is_ok());
-        // In Line mode, should select entire line "world"
+        // Single clicks should position cursor exactly, not expand selection
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
+        // Verify selection is empty (cursor at exact position)
+        assert_eq!(range.start, range.end);
+        // Verify cursor is at the clicked position
         let buffer = editor.buffer.borrow();
-        let selected_text: String = buffer.slice(&range).unwrap().to_string();
-        assert_eq!(selected_text, "world");
+        let position = buffer.char_to_position(range.start).unwrap();
+        assert_eq!(position.line, 1);
+        assert_eq!(position.column, 4); // Middle of "world"
     }
 
     #[test]
