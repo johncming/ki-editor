@@ -948,11 +948,13 @@ impl<T: Frontend> App<T> {
                     self.lsp_manager().send_message(
                         path.clone(),
                         FromEditor::TextDocumentDidChange {
-                            content,
+                            content: content.clone(),
                             file_path: path,
                             version: 2,
                         },
                     )?;
+                    // 更新词频索引
+                    self.word_completion.update_from_text(&content);
                 }
             }
             Dispatch::DocumentDidSave { path } => {
@@ -1543,6 +1545,9 @@ impl<T: Frontend> App<T> {
         let language = buffer.language();
         let content = buffer.content();
         let batch_id = buffer.batch_id().clone();
+
+        // 更新词频索引
+        self.word_completion.update_from_text(&content);
         let buffer = Rc::new(RefCell::new(buffer));
         let editor = SuggestiveEditor::from_buffer(
             buffer,
