@@ -2266,7 +2266,8 @@ impl Editor {
         );
 
         // Set cursor position (existing function)
-        let result = self.set_cursor_position(buffer_row, buffer_col, false, context);
+        // Use expand=true to respect current SelectionMode (Line, Word, Node, etc.)
+        let result = self.set_cursor_position(buffer_row, buffer_col, true, context);
 
         // Log new selection after click
         let selection = self.selection_set.primary_selection();
@@ -5035,6 +5036,9 @@ mod mouse_click_tests {
             width: 20,
             height: 10,
         };
+        // Default mode is Line, so clicking will select the whole line
+        // Set to Character mode for precise cursor positioning test
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
 
         let context = Context::default();
         // Line number width for 3 lines: "3" = 1 digit + 1 border = 2
@@ -5043,7 +5047,7 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(4, 1, &context);
 
         assert!(result.is_ok());
-        // Check cursor moved to expected position
+        // In Character mode, cursor should be at the clicked position
         let position = get_cursor_position(&editor).unwrap();
         assert_eq!(position.line, 0);
         assert_eq!(position.column, 2);
@@ -5178,16 +5182,17 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(6, 2, &context);
 
         assert!(result.is_ok());
-        // Single clicks should position cursor exactly, not expand selection
+        // In Line mode, clicking should select the entire line
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
-        // Verify selection is empty (cursor at exact position)
-        assert_eq!(range.start, range.end);
-        // Verify cursor is at the clicked position
         let buffer = editor.buffer.borrow();
-        let position = buffer.char_to_position(range.start).unwrap();
-        assert_eq!(position.line, 1);
-        assert_eq!(position.column, 4); // Middle of "world"
+        // Verify selection covers the whole line "world\n" (line 1)
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        let end_pos = buffer.char_to_position(range.end).unwrap();
+        assert_eq!(start_pos.line, 1);
+        assert_eq!(start_pos.column, 0); // Start of line
+        // End should be at start of next line (line 2) or end of buffer
+        assert!(end_pos.line >= 1);
     }
 
     #[test]
@@ -5208,16 +5213,18 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(8, 1, &context);
 
         assert!(result.is_ok());
-        // Single click should position cursor exactly, not expand to word
+        // In Word mode, clicking should select the word "world"
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
         let buffer = editor.buffer.borrow();
-        // Verify selection is empty (cursor at clicked position)
-        assert_eq!(range.start, range.end);
-        // Verify cursor is at start of "world" (column 6 after line number offset)
-        let position = buffer.char_to_position(range.start).unwrap();
-        assert_eq!(position.line, 0);
-        assert_eq!(position.column, 6); // Start of "world"
+        // Verify selection is NOT empty (word is selected)
+        assert!(range.start < range.end, "Selection should expand to word");
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        let end_pos = buffer.char_to_position(range.end).unwrap();
+        assert_eq!(start_pos.line, 0);
+        assert_eq!(start_pos.column, 6); // Start of "world"
+        assert_eq!(end_pos.line, 0);
+        assert_eq!(end_pos.column, 11); // End of "world" (after 'd')
     }
 
     #[test]
@@ -5254,6 +5261,8 @@ mod mouse_click_tests {
             width: 20,
             height: 10,
         };
+        // Set to Character mode for precise positioning test
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
 
         let context = Context::default();
         // Click at position after "hello" (column 5 + line_number_width(2) = 7)
@@ -5261,15 +5270,16 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(7, 1, &context);
 
         assert!(result.is_ok());
-        // Cursor should be at position 5 (end of "hello"), not extend
+        // In Character mode, cursor should be at position 5 (end of "hello")
         let position = get_cursor_position(&editor).unwrap();
         assert_eq!(position.line, 0);
         assert_eq!(position.column, 5);
 
-        // Explicitly verify selection is empty
+        // In Character mode, selection contains the clicked character (not empty)
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
-        assert_eq!(range.start, range.end, "Selection should be empty");
+        // Character mode selects one character, so range length should be >= 1
+        assert!(range.end.0 - range.start.0 >= 1, "Character mode should select at least one character");
     }
 
     #[test]
@@ -5290,15 +5300,15 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(4, 2, &context);
 
         assert!(result.is_ok());
-        // Cursor should be at exact position, not expand to include non-existent next line
-        let position = get_cursor_position(&editor).unwrap();
-        assert_eq!(position.line, 1);
-        assert_eq!(position.column, 2);
-
-        // Explicitly verify selection is empty
+        // In Line mode, clicking should select the entire line "world"
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
-        assert_eq!(range.start, range.end, "Selection should be empty");
+        let buffer = editor.buffer.borrow();
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        assert_eq!(start_pos.line, 1);
+        assert_eq!(start_pos.column, 0); // Start of line
+        // Selection should not be empty (line is selected)
+        assert!(range.start < range.end, "Selection should expand to line in Line mode");
     }
 
     #[test]
