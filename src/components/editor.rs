@@ -2145,41 +2145,46 @@ impl Editor {
         &mut self,
         row: usize,
         column: usize,
+        expand: bool,
         context: &Context,
     ) -> anyhow::Result<Dispatches> {
-        // 计算字符索引
         let char_index = self.buffer.borrow().line_to_char(row)? + column;
 
-        // 1. 首先创建一个临时 selection_set，selection 在点击位置（空范围）
-        let temp_selection = self
-            .selection_set
-            .primary_selection()
-            .clone()
-            .set_range((char_index..char_index).into());
+        if expand {
+            // Existing logic: Use SelectionMode's Current movement
+            // 1. 首先创建一个临时 selection_set，selection 在点击位置（空范围）
+            let temp_selection = self
+                .selection_set
+                .primary_selection()
+                .clone()
+                .set_range((char_index..char_index).into());
 
-        let temp_selection_set = self
-            .selection_set
-            .clone()
-            .set_selections(NonEmpty::new(temp_selection));
+            let temp_selection_set = self
+                .selection_set
+                .clone()
+                .set_selections(NonEmpty::new(temp_selection));
 
-        // 2. 使用当前 SelectionMode 生成正确的选区
-        // 通过 Current movement 让 mode 决定选区范围
-        let current_mode = self.selection_set.mode().clone();
-        let new_selection_set = {
-            let buffer = self.buffer.borrow();
-            temp_selection_set.generate(
-                &buffer,
-                &current_mode,
-                &MovementApplicandum::Current(IfCurrentNotFound::LookForward),
-                &self.cursor_direction,
-                context,
-            )?
-        };
-        if let Some(new_selection_set) = new_selection_set {
-            Ok(self.update_selection_set(new_selection_set, true, context))
-        } else {
-            Ok(Dispatches::default())
+            // 2. 使用当前 SelectionMode 生成正确的选区
+            // 通过 Current movement 让 mode 决定选区范围
+            let current_mode = self.selection_set.mode().clone();
+            let new_selection_set = {
+                let buffer = self.buffer.borrow();
+                temp_selection_set.generate(
+                    &buffer,
+                    &current_mode,
+                    &MovementApplicandum::Current(IfCurrentNotFound::LookForward),
+                    &self.cursor_direction,
+                    context,
+                )?
+            };
+            if let Some(new_selection_set) = new_selection_set {
+                return Ok(self.update_selection_set(new_selection_set, true, context));
+            } else {
+                return Ok(Dispatches::default());
+            }
         }
+        // else branch added in next task
+        Ok(Dispatches::default())
     }
 
     pub(crate) fn get_line_number_width(&self) -> usize {
