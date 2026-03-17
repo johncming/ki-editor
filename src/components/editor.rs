@@ -2124,6 +2124,12 @@ impl Editor {
 
         self.mode = Mode::Normal;
         self.selection_set.unset_initial_range();
+
+        // Switch input method to ABC when entering normal mode
+        let _ = std::process::Command::new("/opt/homebrew/bin/im-select")
+            .arg("com.apple.keylayout.ABC")
+            .output();
+
         Ok(())
     }
 
