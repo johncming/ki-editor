@@ -116,6 +116,8 @@ pub struct App<T: Frontend> {
 
     /// Word completion system for word-based auto-completion
     word_completion: crate::word_completion::WordCompletion,
+    /// Pending word completions to be merged with LSP completions
+    pending_word_completions: Vec<String>,
 
     /// This is necessary when Ki is running as an embedded application
     last_prompt_config: Option<PromptConfig>,
@@ -261,6 +263,7 @@ impl<T: Frontend> App<T> {
             integration_event_sender,
             last_prompt_config: None,
             word_completion: crate::word_completion::WordCompletion::new(),
+            pending_word_completions: Vec::new(),
             queued_events: Vec::new(),
             file_watcher_input_sender,
         };
@@ -758,25 +761,27 @@ impl<T: Frontend> App<T> {
             Dispatch::RequestCompletion => self.debounce_lsp_request_completion.call(()),
             Dispatch::RequestCompletionDebounced => {
                 if let Some(params) = self.get_request_params() {
+                    // Always get word completions first
+                    let current_word = self
+                        .current_component()
+                        .borrow()
+                        .editor()
+                        .get_current_word()
+                        .unwrap_or_default();
+                    let word_completions = self.word_completion.get_completions(&current_word, 50);
+
                     // Check if there's LSP support
                     if self.lsp_manager().has_lsp_support(&params.path) {
-                        // Has LSP support, send LSP request
+                        // Has LSP support: store word completions to merge with LSP results
+                        self.pending_word_completions = word_completions;
                         self.lsp_manager().send_message(
                             params.path.clone(),
                             FromEditor::TextDocumentCompletion(params),
                         )?;
                     } else {
-                        // No LSP support, use word-based completion
-                        let current_word = self
-                            .current_component()
-                            .borrow()
-                            .editor()
-                            .get_current_word()
-                            .unwrap_or_default();
-                        let completions = self.word_completion.get_completions(&current_word, 50);
-
-                        if !completions.is_empty() {
-                            let completion = self.word_completions_to_completion(completions);
+                        // No LSP support, use only word-based completion
+                        if !word_completions.is_empty() {
+                            let completion = self.word_completions_to_completion(word_completions);
                             self.handle_dispatch(Dispatch::ToSuggestiveEditor(
                                 DispatchSuggestiveEditor::Completion(completion),
                             ))?;
@@ -1612,7 +1617,35 @@ impl<T: Frontend> App<T> {
                     locations.into_iter().map(QuickfixListItem::from).collect(),
                 ),
             ),
-            LspNotification::Completion(_context, completion) => {
+            LspNotification::Completion(_context, mut completion) => {
+                // Merge word completions with LSP completions
+                let word_completions = std::mem::take(&mut self.pending_word_completions);
+                if !word_completions.is_empty() {
+                    let word_items: Vec<_> = word_completions
+                        .into_iter()
+                        .map(|word| {
+                            crate::components::dropdown_sync::DropdownItem::from(
+                                crate::lsp::completion::CompletionItem {
+                                    label: word.clone(),
+                                    kind: None,
+                                    detail: None,
+                                    documentation: None,
+                                    sort_text: None,
+                                    insert_text: Some(word.clone()),
+                                    edit: None,
+                                    completion_item: lsp_types::CompletionItem {
+                                        label: word,
+                                        ..Default::default()
+                                    },
+                                },
+                            )
+                        })
+                        .collect();
+
+                    // Append word completions to LSP completions
+                    completion.items.extend(word_items);
+                }
+
                 self.handle_dispatch_suggestive_editor(DispatchSuggestiveEditor::Completion(
                     completion,
                 ))?;

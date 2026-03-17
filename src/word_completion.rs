@@ -53,24 +53,42 @@ impl WordCompletion {
     }
 
     /// 获取补全候选（按 MRU 排序）
+    /// 过滤掉是其他词前缀的词（如 `hel`、`hell` 会被过滤，只保留 `hello`）
     pub fn get_completions(&self, prefix: &str, limit: usize) -> Vec<String> {
         let prefix_lower = prefix.to_lowercase();
 
-        let mut matches: Vec<_> = self
+        // 收集所有匹配的词
+        let candidates: Vec<_> = self
             .words
             .iter()
             .filter(|(word, _)| {
                 word.to_lowercase().starts_with(&prefix_lower) && word.as_str() != prefix
             })
+            .map(|(word, time)| (word.clone(), *time))
+            .collect();
+
+        // 构建词集合用于前缀检查
+        let word_set: std::collections::HashSet<&str> =
+            self.words.keys().map(|s| s.as_str()).collect();
+
+        // 过滤掉是其他词前缀的词
+        let mut filtered: Vec<_> = candidates
+            .into_iter()
+            .filter(|(word, _)| {
+                // 检查是否存在比当前词更长的词，且当前词是那个词的前缀
+                !word_set.iter().any(|other| {
+                    other.len() > word.len() && other.starts_with(word.as_str())
+                })
+            })
             .collect();
 
         // 按最近使用时间排序（最新的在前）
-        matches.sort_by(|a, b| b.1.cmp(a.1));
+        filtered.sort_by(|a, b| b.1.cmp(&a.1));
 
-        matches
+        filtered
             .into_iter()
             .take(limit)
-            .map(|(word, _)| word.clone())
+            .map(|(word, _)| word)
             .collect()
     }
 
