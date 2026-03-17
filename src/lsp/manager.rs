@@ -54,6 +54,21 @@ impl LspManager {
             .unwrap_or_else(|| Ok(()))
     }
 
+    /// 检查指定路径是否有 LSP 支持
+    pub fn has_lsp_support(&self, path: &AbsolutePath) -> bool {
+        crate::config::from_path(path)
+            .and_then(|language| {
+                let language_id = language.id()?;
+                let channel = self.lsp_server_process_channels.get(&language_id)?;
+                if channel.is_initialized() {
+                    Some(true)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false)
+    }
+
     pub fn send_message(
         &mut self,
         path: AbsolutePath,
