@@ -5166,10 +5166,10 @@ mod mouse_click_tests {
         let buffer = editor.buffer.borrow();
         // Verify selection is empty (cursor at clicked position)
         assert_eq!(range.start, range.end);
-        // Verify cursor is in middle of "world"
+        // Verify cursor is at start of "world" (column 6 after line number offset)
         let position = buffer.char_to_position(range.start).unwrap();
         assert_eq!(position.line, 0);
-        assert_eq!(position.column, 7); // Middle of "world" (column 6-10)
+        assert_eq!(position.column, 6); // Start of "world"
     }
 
     #[test]
