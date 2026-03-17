@@ -140,7 +140,23 @@ All other call sites of `set_cursor_position` should pass `expand = true` to mai
 
 ### Existing Tests
 
-The existing test `test_valid_mouse_click_moves_cursor` already validates correct cursor positioning. No test assertion changes are needed.
+**Tests that need updating:**
+
+The following tests currently expect mouse clicks to expand selection according to SelectionMode. They need to be updated to expect exact positioning (empty selection):
+
+1. `test_click_respects_line_mode` (line ~5108) - Currently expects line to be selected
+2. `test_click_respects_word_mode` (line ~5139) - Currently expects word to be selected
+
+**Updated expectation:** After clicking, the selection should be empty (cursor at exact position).
+
+### New Tests Needed
+
+Add tests for edge cases:
+
+1. **Last line test** - Click on last line which has no trailing `\n`
+2. **Line boundary test** - Click at exact position of line length (before `\n`)
+3. **Different SelectionModes** - Verify exact positioning in Character, Word, Line, Subword modes
+4. **Multi-cursor mode** - Verify multi-cursor is cleared on click
 
 ### Manual Testing
 
@@ -171,10 +187,22 @@ After implementation, verify:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Missing call sites for `set_cursor_position` | Could break existing behavior | Use Grep to find all call sites and review each one |
-| Users expect mouse click to expand selection | Behavior change | Mouse click is fundamentally a positioning operation, not a selection operation |
+| Users expect mouse click to expand selection | Behavior change | Mouse click is fundamentally a positioning operation, not a selection operation. This matches standard editor behavior (single click = position, double click = select) |
+| Test updates overlooked | Tests may fail | Explicitly identify tests that need updates and verify they pass |
+| Mouse drag selection affected | Could break text selection | Verify that mouse drag uses a different code path or is unaffected |
+
+**Important UX Note:** In standard editors:
+- Single mouse click = position cursor
+- Double click = select word
+- Triple click = select line
+
+This fix aligns ki-editor with standard behavior.
 
 ## Success Criteria
 
 - Mouse clicks position the cursor exactly where clicked, regardless of SelectionMode
-- All existing tests pass
+- Updated tests (`test_click_respects_line_mode`, `test_click_respects_word_mode`) pass with exact positioning expectations
+- New edge case tests (last line, line boundary) pass
+- All other existing tests pass
 - Keyboard navigation and other cursor movements still work correctly with SelectionMode expansion
+- Mouse drag selection still works correctly (if using different code path)
