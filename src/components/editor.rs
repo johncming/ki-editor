@@ -2178,13 +2178,14 @@ impl Editor {
                 )?
             };
             if let Some(new_selection_set) = new_selection_set {
-                return Ok(self.update_selection_set(new_selection_set, true, context));
+                Ok(self.update_selection_set(new_selection_set, true, context))
             } else {
-                return Ok(Dispatches::default());
+                Ok(Dispatches::default())
             }
+        } else {
+            // else branch added in next task
+            Ok(Dispatches::default())
         }
-        // else branch added in next task
-        Ok(Dispatches::default())
     }
 
     pub(crate) fn get_line_number_width(&self) -> usize {
@@ -2243,7 +2244,7 @@ impl Editor {
         }
 
         // Set cursor position (existing function)
-        self.set_cursor_position(buffer_row, buffer_col, context)
+        self.set_cursor_position(buffer_row, buffer_col, false, context)
     }
 
     /// Get the selection that preserves the syntactic structure of the current selection.
