@@ -772,7 +772,14 @@ impl<T: Frontend> App<T> {
 
                     // Check if there's LSP support
                     if self.lsp_manager().has_lsp_support(&params.path) {
-                        // Has LSP support: store word completions to merge with LSP results
+                        // Immediately show word completions first
+                        if !word_completions.is_empty() {
+                            let completion = self.word_completions_to_completion(word_completions.clone());
+                            self.handle_dispatch(Dispatch::ToSuggestiveEditor(
+                                DispatchSuggestiveEditor::Completion(completion),
+                            ))?;
+                        }
+                        // Also store for merging with LSP results
                         self.pending_word_completions = word_completions;
                         self.lsp_manager().send_message(
                             params.path.clone(),
