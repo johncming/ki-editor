@@ -40,10 +40,10 @@ Update the test at line 5108-5130 to verify that clicking in Line mode results i
 
 The test should:
 1. Create editor with content "hello\nworld"
-2. Set SelectionMode to LineFull
+2. Set SelectionMode to Line (Note: verify correct constructor - Line vs Line(IfCurrentNotFound))
 3. Click in middle of "world" (column 8, row 0 after line number width)
-4. Verify selection is empty (cursor at clicked position)
-5. Verify selected_text returns empty string or single character
+4. Verify position is at clicked location
+5. Verify selection is empty (start == end)
 
 - [ ] **Step 3: Run test to verify it fails**
 
@@ -123,14 +123,15 @@ fn test_click_on_last_line_positions_correctly() {
         width: 20,
         height: 10,
     };
+    // Note: Verify correct SelectionMode constructor - may be SelectionMode::Line directly
     editor.selection_set = SelectionSet::default()
-        .set_mode(SelectionMode::Line(IfCurrentNotFound::LookForward))
+        .set_mode(SelectionMode::Line)
         .set_selections(NonEmpty::new(
             Selection::new((CharIndex(0)..CharIndex(0)).into())
         ));
 
     let context = Context::default();
-    // Click on last line "world" at column 2 ('r')
+    // Click on last line "world" at column 2 ('r') - calculate: line_number_width(2) + 2 = 4
     let result = editor.handle_mouse_click(4, 1, &context);
 
     assert!(result.is_ok());
@@ -138,6 +139,11 @@ fn test_click_on_last_line_positions_correctly() {
     let position = get_cursor_position(&editor).unwrap();
     assert_eq!(position.line, 1);
     assert_eq!(position.column, 2);
+
+    // Explicitly verify selection is empty
+    let selection = editor.selection_set.primary_selection();
+    let range = selection.extended_range();
+    assert_eq!(range.start, range.end, "Selection should be empty");
 }
 ```
 
@@ -180,7 +186,7 @@ fn test_click_at_line_boundary_positions_correctly() {
     };
 
     let context = Context::default();
-    // Click at position after "hello" (column 5 + line_number_width)
+    // Click at position after "hello" (column 5 + line_number_width(2) = 7)
     let result = editor.handle_mouse_click(7, 0, &context);
 
     assert!(result.is_ok());
@@ -188,6 +194,11 @@ fn test_click_at_line_boundary_positions_correctly() {
     let position = get_cursor_position(&editor).unwrap();
     assert_eq!(position.line, 0);
     assert_eq!(position.column, 5);
+
+    // Explicitly verify selection is empty
+    let selection = editor.selection_set.primary_selection();
+    let range = selection.extended_range();
+    assert_eq!(range.start, range.end, "Selection should be empty");
 }
 ```
 
@@ -371,6 +382,11 @@ johncming@126.com"
 **Files:**
 - Test: all test files
 
+- [ ] **Step 0: Run cargo check to verify no other call sites**
+
+Run: `cargo check`
+Expected: OK - confirms only handle_mouse_click calls set_cursor_position
+
 - [ ] **Step 1: Run full test suite for mouse functionality**
 
 Run: `cargo test --lib mouse`
@@ -475,8 +491,11 @@ johncming@126.com"
 **Test Changes Required:**
 - `test_click_respects_line_mode` - expect empty selection
 - `test_click_respects_word_mode` - expect empty selection
+- `test_click_character_mode_empty_selection` - already expects exact positioning, should continue to pass
 - New test: `test_click_on_last_line_positions_correctly`
 - New test: `test_click_at_line_boundary_positions_correctly`
+
+**Note:** Task 3 and Task 4 require verification of the correct SelectionMode constructor. The existing tests use `SelectionMode::Line` without parameter, but the test skeleton uses `SelectionMode::Line(IfCurrentNotFound::LookForward)`. Verify which is correct and update accordingly.
 
 **Code Changes:**
 - `set_cursor_position` signature: add `expand: bool`
