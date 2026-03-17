@@ -2183,8 +2183,12 @@ impl Editor {
                 Ok(Dispatches::default())
             }
         } else {
-            // else branch added in next task
-            Ok(Dispatches::default())
+            // Use exact position without expansion
+            let exact_selection = Selection::new((char_index..char_index).into());
+            let new_selection_set = self.selection_set
+                .clone()
+                .set_selections(NonEmpty::new(exact_selection));
+            return Ok(self.update_selection_set(new_selection_set, true, context));
         }
     }
 
