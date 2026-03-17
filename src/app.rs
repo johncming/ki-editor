@@ -758,10 +758,30 @@ impl<T: Frontend> App<T> {
             Dispatch::RequestCompletion => self.debounce_lsp_request_completion.call(()),
             Dispatch::RequestCompletionDebounced => {
                 if let Some(params) = self.get_request_params() {
-                    self.lsp_manager().send_message(
-                        params.path.clone(),
-                        FromEditor::TextDocumentCompletion(params),
-                    )?;
+                    // Check if there's LSP support
+                    if self.lsp_manager().has_lsp_support(&params.path) {
+                        // Has LSP support, send LSP request
+                        self.lsp_manager().send_message(
+                            params.path.clone(),
+                            FromEditor::TextDocumentCompletion(params),
+                        )?;
+                    } else {
+                        // No LSP support, use word-based completion
+                        let current_word = self
+                            .current_component()
+                            .borrow()
+                            .editor()
+                            .get_current_word()
+                            .unwrap_or_default();
+                        let completions = self.word_completion.get_completions(&current_word, 50);
+
+                        if !completions.is_empty() {
+                            let completion = self.word_completions_to_completion(completions);
+                            self.handle_dispatch(Dispatch::ToSuggestiveEditor(
+                                DispatchSuggestiveEditor::Completion(completion),
+                            ))?;
+                        }
+                    }
                 }
             }
             Dispatch::ResolveCompletionItem(completion_item) => {
@@ -2251,6 +2271,35 @@ impl<T: Frontend> App<T> {
                 )))
             })
             .collect_vec()
+    }
+
+    /// Convert word list to Completion for word-based completion fallback
+    fn word_completions_to_completion(&self, words: Vec<String>) -> crate::lsp::completion::Completion {
+        let items: Vec<DropdownItem> = words
+            .into_iter()
+            .map(|word| {
+                // Manually construct CompletionItem
+                CompletionItem {
+                    label: word.clone(),
+                    kind: None,
+                    detail: None,
+                    documentation: None,
+                    sort_text: None,
+                    insert_text: Some(word.clone()),
+                    edit: None,
+                    completion_item: lsp_types::CompletionItem {
+                        label: word,
+                        ..Default::default()
+                    },
+                }
+            })
+            .map(DropdownItem::from)
+            .collect();
+
+        crate::lsp::completion::Completion {
+            items,
+            trigger_characters: vec![],
+        }
     }
 
     fn open_alternate_file(&mut self) -> anyhow::Result<()> {
