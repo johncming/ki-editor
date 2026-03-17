@@ -2218,6 +2218,14 @@ impl Editor {
         // Calculate title bar height - the title is rendered above content
         let title_height = self.window_title_height(context);
 
+        // Calculate hidden parent lines count - these are displayed at the top of content area
+        // (e.g., function headers when cursor is inside a large function)
+        // Must apply the same clamping logic as rendering (max 50% of content area)
+        let (hidden_parent_lines, _) = self.get_parent_lines()?;
+        let content_height = self.rectangle.height.saturating_sub(title_height);
+        let max_hidden_parent_lines = content_height / 2;
+        let hidden_parent_lines_count = hidden_parent_lines.len().min(max_hidden_parent_lines);
+
         // Calculate relative position (accounting for title bar offset)
         let relative_row = mouse_row as usize - self.rectangle.origin.line;
         let relative_col = mouse_column as usize - self.rectangle.origin.column;
@@ -2227,8 +2235,14 @@ impl Editor {
             return Ok(Dispatches::default());
         }
 
-        // Adjust relative_row to account for title bar
-        let content_relative_row = relative_row - title_height;
+        // Check if click is in hidden parent lines area - ignore clicks on sticky headers
+        let content_area_start = title_height + hidden_parent_lines_count;
+        if relative_row < content_area_start {
+            return Ok(Dispatches::default());
+        }
+
+        // Adjust relative_row to account for title bar and hidden parent lines
+        let content_relative_row = relative_row - content_area_start;
 
         // Check if click is in line number area
         let line_number_width = self.get_line_number_width();
