@@ -5188,6 +5188,31 @@ mod mouse_click_tests {
     }
 
     #[test]
+    fn test_click_at_line_boundary_positions_correctly() {
+        let mut editor = create_test_editor("hello\nworld");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Click at position after "hello" (column 5 + line_number_width(2) = 7)
+        let result = editor.handle_mouse_click(7, 0, &context);
+
+        assert!(result.is_ok());
+        // Cursor should be at position 5 (end of "hello"), not extend
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 5);
+
+        // Explicitly verify selection is empty
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        assert_eq!(range.start, range.end, "Selection should be empty");
+    }
+
+    #[test]
     fn test_click_on_last_line_positions_correctly() {
         let mut editor = create_test_editor("hello\nworld");  // "world" has no trailing \n
         editor.rectangle = Rectangle {
