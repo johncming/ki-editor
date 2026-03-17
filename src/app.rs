@@ -114,6 +114,9 @@ pub struct App<T: Frontend> {
     last_action_description: Option<String>,
     last_action_short_description: Option<String>,
 
+    /// Word completion system for word-based auto-completion
+    word_completion: crate::word_completion::WordCompletion,
+
     /// This is necessary when Ki is running as an embedded application
     last_prompt_config: Option<PromptConfig>,
 
@@ -257,6 +260,7 @@ impl<T: Frontend> App<T> {
             last_action_short_description: None,
             integration_event_sender,
             last_prompt_config: None,
+            word_completion: crate::word_completion::WordCompletion::new(),
             queued_events: Vec::new(),
             file_watcher_input_sender,
         };
