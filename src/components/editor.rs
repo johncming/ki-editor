@@ -5150,12 +5150,16 @@ mod mouse_click_tests {
         let result = editor.handle_mouse_click(8, 0, &context);
 
         assert!(result.is_ok());
-        // In Word mode, should select "world"
+        // Single click should position cursor exactly, not expand to word
         let selection = editor.selection_set.primary_selection();
         let range = selection.extended_range();
         let buffer = editor.buffer.borrow();
-        let selected_text: String = buffer.slice(&range).unwrap().to_string();
-        assert_eq!(selected_text, "world");
+        // Verify selection is empty (cursor at clicked position)
+        assert_eq!(range.start, range.end);
+        // Verify cursor is in middle of "world"
+        let position = buffer.char_to_position(range.start).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 7); // Middle of "world" (column 6-10)
     }
 
     #[test]
