@@ -61,7 +61,7 @@ impl Border {
                         BorderDirection::Vertical => '│',
                     },
                     foreground_color: border_style.foreground_color.unwrap_or_default(),
-                    background_color: border_style.background_color.unwrap_or_default(),
+                    background_color: border_style.background_color,
                     ..Default::default()
                 },
             })
@@ -381,6 +381,13 @@ impl Rectangle {
             width: self.width,
             height: self.height,
         }
+    }
+
+    pub fn contains(&self, position: &Position) -> bool {
+        position.line >= self.origin.line
+            && position.line < self.origin.line + self.height
+            && position.column >= self.origin.column
+            && position.column < self.origin.column + self.width
     }
 
     /// Split the rectangle horizontally at the given line.
@@ -793,3 +800,64 @@ mod test_rectangle {
         }
     }
 }
+
+#[cfg(test)]
+mod test_contains {
+    use super::*;
+
+    #[test]
+    fn test_rectangle_contains_inside_points() {
+        let rect = Rectangle {
+            origin: Position::new(2, 3),
+            width: 5,
+            height: 4,
+        };
+
+        // Inside points (inclusive of origin, exclusive of bounds)
+        assert!(rect.contains(&Position::new(2, 3)));
+        assert!(rect.contains(&Position::new(5, 7)));
+        assert!(rect.contains(&Position::new(2, 4)));
+        assert!(rect.contains(&Position::new(3, 3)));
+    }
+
+    #[test]
+    fn test_rectangle_contains_outside_points() {
+        let rect = Rectangle {
+            origin: Position::new(2, 3),
+            width: 5,
+            height: 4,
+        };
+
+        // Outside points
+        assert!(!rect.contains(&Position::new(1, 3)));
+        assert!(!rect.contains(&Position::new(6, 3)));
+        assert!(!rect.contains(&Position::new(2, 2)));
+        assert!(!rect.contains(&Position::new(2, 8)));
+        assert!(!rect.contains(&Position::new(1, 2)));
+    }
+
+    #[test]
+    fn test_rectangle_contains_boundary() {
+        let rect = Rectangle {
+            origin: Position::new(0, 0),
+            width: 10,
+            height: 5,
+        };
+
+        // Origin is inside
+        assert!(rect.contains(&Position::new(0, 0)));
+
+        // Right edge (column 10) is outside
+        assert!(!rect.contains(&Position::new(0, 10)));
+
+        // Bottom edge (line 5) is outside
+        assert!(!rect.contains(&Position::new(5, 0)));
+
+        // Last valid column (9) is inside
+        assert!(rect.contains(&Position::new(0, 9)));
+
+        // Last valid line (4) is inside
+        assert!(rect.contains(&Position::new(4, 9)));
+    }
+}
+

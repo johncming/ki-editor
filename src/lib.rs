@@ -1,6 +1,8 @@
 mod buffer;
 mod git;
 
+pub mod word_completion;
+
 pub mod char_index_range;
 mod cli;
 mod clipboard;

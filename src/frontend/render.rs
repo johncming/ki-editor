@@ -66,7 +66,10 @@ impl<'a> Renderer<'a> {
     }
 
     fn background_color(&mut self, cell: &PositionedCell) -> anyhow::Result<()> {
-        self.command(SetBackgroundColor(cell.cell.background_color.into()))
+        match cell.cell.background_color {
+            Some(color) => self.command(SetBackgroundColor(color.into())),
+            None => self.command(SetBackgroundColor(crossterm::style::Color::Reset)),
+        }
     }
 
     fn foreground_color(&mut self, cell: &PositionedCell) -> anyhow::Result<()> {
@@ -93,7 +96,7 @@ struct TerminalState<'a> {
     underline_color: Option<Color>,
     underline_state: Option<CellLineStyle>,
     foreground_color: Color,
-    background_color: Color,
+    background_color: Option<Color>,
 }
 
 impl<'a> TerminalState<'a> {

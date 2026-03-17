@@ -1,3 +1,4 @@
+pub mod alien_blood;
 pub mod from_zed_theme;
 pub mod theme_descriptor;
 pub mod very_dark;
@@ -9,6 +10,7 @@ use itertools::Itertools;
 use my_proc_macros::hex;
 use once_cell::sync::OnceCell;
 use strum::IntoEnumIterator as _;
+pub use alien_blood::alien_blood;
 pub use very_dark::very_dark;
 pub use vscode_dark::vscode_dark;
 pub use vscode_light::vscode_light;
@@ -189,7 +191,8 @@ pub struct UiStyles {
     pub jump_mark_odd: Style,
     pub jump_mark_even: Style,
     pub text_foreground: Color,
-    pub background_color: Color,
+    /// `None` means transparent (use terminal default background)
+    pub background_color: Option<Color>,
     pub primary_selection_background: Color,
     pub primary_selection_anchor_background: Color,
     pub primary_selection_secondary_cursor: Style,

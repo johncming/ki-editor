@@ -36,6 +36,7 @@ use crate::{
 };
 use crate::{grid::LINE_NUMBER_VERTICAL_BORDER, selection_mode::PositionBasedSelectionMode};
 use crossterm::event::{KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use log::info;
 use event::KeyEvent;
 use itertools::{Either, Itertools};
 use my_proc_macros::key;
@@ -142,6 +143,7 @@ impl Component for Editor {
     fn handle_mouse_event(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
+        context: &Context,
     ) -> anyhow::Result<Dispatches> {
         const SCROLL_HEIGHT: usize = 2;
         match mouse_event.kind {
@@ -153,7 +155,9 @@ impl Component for Editor {
                 self.apply_scroll(Direction::End, SCROLL_HEIGHT);
                 Ok(Dispatches::default())
             }
-            MouseEventKind::Down(MouseButton::Left) => Ok(Dispatches::default()),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.handle_mouse_click(mouse_event.column, mouse_event.row, context)
+            }
             _ => Ok(Dispatches::default()),
         }
     }
@@ -185,7 +189,7 @@ impl Component for Editor {
                 Texts::new(NonEmpty::singleton(content)),
                 context,
             ),
-            event::event::Event::Mouse(event) => self.handle_mouse_event(event),
+            event::event::Event::Mouse(event) => self.handle_mouse_event(event, context),
             _ => Ok(Dispatches::default()),
         }
     }
@@ -2120,6 +2124,12 @@ impl Editor {
 
         self.mode = Mode::Normal;
         self.selection_set.unset_initial_range();
+
+        // Switch input method to ABC when entering normal mode
+        let _ = std::process::Command::new("/opt/homebrew/bin/im-select")
+            .arg("com.apple.keylayout.ABC")
+            .output();
+
         Ok(())
     }
 
@@ -2138,27 +2148,169 @@ impl Editor {
             .unwrap_or_default()
     }
 
-    // TODO: handle mouse click
-    #[allow(dead_code)]
     pub fn set_cursor_position(
         &mut self,
         row: usize,
         column: usize,
+        expand: bool,
         context: &Context,
     ) -> anyhow::Result<Dispatches> {
-        let start = (self.buffer.borrow().line_to_char(row)?) + column;
-        let primary = self
-            .selection_set
-            .primary_selection()
-            .clone()
-            .set_range((start..start).into());
-        Ok(self.update_selection_set(
-            self.selection_set
+        let char_index = self.buffer.borrow().line_to_char(row)? + column;
+
+        if expand {
+            // Existing logic: Use SelectionMode's Current movement
+            // 1. 首先创建一个临时 selection_set，selection 在点击位置（空范围）
+            let temp_selection = self
+                .selection_set
+                .primary_selection()
                 .clone()
-                .set_selections(NonEmpty::new(primary)),
-            true,
-            context,
-        ))
+                .set_range((char_index..char_index).into());
+
+            let temp_selection_set = self
+                .selection_set
+                .clone()
+                .set_selections(NonEmpty::new(temp_selection));
+
+            // 2. 使用当前 SelectionMode 生成正确的选区
+            // 通过 Current movement 让 mode 决定选区范围
+            let current_mode = self.selection_set.mode().clone();
+            let new_selection_set = {
+                let buffer = self.buffer.borrow();
+                temp_selection_set.generate(
+                    &buffer,
+                    &current_mode,
+                    &MovementApplicandum::Current(IfCurrentNotFound::LookForward),
+                    &self.cursor_direction,
+                    context,
+                )?
+            };
+            if let Some(new_selection_set) = new_selection_set {
+                Ok(self.update_selection_set(new_selection_set, true, context))
+            } else {
+                Ok(Dispatches::default())
+            }
+        } else {
+            // Use exact position without expansion
+            let exact_selection = Selection::new((char_index..char_index).into());
+            let new_selection_set = self.selection_set
+                .clone()
+                .set_selections(NonEmpty::new(exact_selection));
+            return Ok(self.update_selection_set(new_selection_set, true, context));
+        }
+    }
+
+    pub(crate) fn get_line_number_width(&self) -> usize {
+        let buffer = self.buffer.borrow();
+        let line_count = buffer.len_lines();
+        // Width = digits for last line number + vertical border character (│)
+        // Matches calculation in src/grid.rs:357
+        let line_number_digits = line_count.max(1).to_string().len();
+        line_number_digits + 1
+    }
+
+    pub(crate) fn handle_mouse_click(
+        &mut self,
+        mouse_column: u16,
+        mouse_row: u16,
+        context: &Context,
+    ) -> anyhow::Result<Dispatches> {
+        // Check if click is within editor rectangle
+        let mouse_pos = Position::new(mouse_row as usize, mouse_column as usize);
+
+        if !self.rectangle.contains(&mouse_pos) {
+            return Ok(Dispatches::default());
+        }
+
+        // Calculate title bar height - the title is rendered above content
+        let title_height = self.window_title_height(context);
+
+        // Calculate hidden parent lines count - these are displayed at the top of content area
+        // (e.g., function headers when cursor is inside a large function)
+        // Must apply the same clamping logic as rendering (max 50% of content area)
+        let (hidden_parent_lines, _) = self.get_parent_lines()?;
+        let content_height = self.rectangle.height.saturating_sub(title_height);
+        let max_hidden_parent_lines = content_height / 2;
+        let hidden_parent_lines_count = hidden_parent_lines.len().min(max_hidden_parent_lines);
+
+        // Calculate relative position (accounting for title bar offset)
+        let relative_row = mouse_row as usize - self.rectangle.origin.line;
+        let relative_col = mouse_column as usize - self.rectangle.origin.column;
+
+        // Check if click is in title area - ignore clicks on title
+        if relative_row < title_height {
+            return Ok(Dispatches::default());
+        }
+
+        // Check if click is in hidden parent lines area - ignore clicks on sticky headers
+        let content_area_start = title_height + hidden_parent_lines_count;
+        if relative_row < content_area_start {
+            return Ok(Dispatches::default());
+        }
+
+        // Adjust relative_row to account for title bar and hidden parent lines
+        let content_relative_row = relative_row - content_area_start;
+
+        // Check if click is in line number area
+        let line_number_width = self.get_line_number_width();
+        if relative_col < line_number_width {
+            return Ok(Dispatches::default());
+        }
+
+        // Calculate buffer position
+        let buffer_row = content_relative_row + self.scroll_offset;
+        let buffer_col = relative_col - line_number_width;
+
+        // Validate buffer position
+        let buffer = self.buffer.borrow();
+        let total_lines = buffer.len_lines();
+        if buffer_row >= total_lines {
+            return Ok(Dispatches::default());
+        }
+
+        let line_content = buffer.get_line_by_line_index(buffer_row)?;
+        if buffer_col > line_content.len_chars() {
+            return Ok(Dispatches::default());
+        }
+        drop(buffer);
+
+        // Clear multi-cursor if in MultiCursor mode
+        // Note: In Normal, Insert, or other modes, clicking does not affect mode
+        if matches!(self.mode, Mode::MultiCursor) {
+            self.mode = Mode::Normal;
+        }
+
+        // Log mouse click position
+        info!(
+            "Mouse click: screen=({},{}) buffer=({},{})",
+            mouse_row, mouse_column, buffer_row, buffer_col
+        );
+
+        // Set cursor position (existing function)
+        // Use expand=true to respect current SelectionMode (Line, Word, Node, etc.)
+        let result = self.set_cursor_position(buffer_row, buffer_col, true, context);
+
+        // Log new selection after click
+        let selection = self.selection_set.primary_selection();
+        {
+            let buffer = self.buffer();
+            let start_pos = selection.range.start.to_position(&buffer);
+            let end_pos = selection.range.end.to_position(&buffer);
+            let mode = self.selection_set.mode().display();
+
+            // The screen position should match the click position
+            // screen_row = buffer_row - scroll_offset + rectangle.origin.line + title_height
+            // screen_col = buffer_col + line_number_width + rectangle.origin.column
+            info!(
+                "Selection [{}]: screen=({},{}) buffer=({},{})-({},{})",
+                mode,
+                buffer_row - self.scroll_offset + self.rectangle.origin.line + title_height,
+                buffer_col + self.get_line_number_width() + self.rectangle.origin.column,
+                start_pos.line, start_pos.column,
+                end_pos.line, end_pos.column
+            );
+        }
+
+        result
     }
 
     /// Get the selection that preserves the syntactic structure of the current selection.
@@ -4850,3 +5002,380 @@ impl std::fmt::Display for SurroundKind {
 
 const INDENT_CHAR: char = ' ';
 const INDENT_WIDTH: usize = 4;
+
+#[cfg(test)]
+mod mouse_click_tests {
+    use super::*;
+    use crate::buffer::Buffer;
+    use crate::components::editor::Mode;
+    use crate::position::Position;
+    use crate::rectangle::Rectangle;
+    use crate::selection::SelectionSet;
+    use crate::selection::Selection;
+    use crate::selection::CharIndex;
+    use crate::selection::SelectionMode;
+    use crate::context::Context;
+    use std::rc::Rc;
+    use std::cell::RefCell;
+    use nonempty::NonEmpty;
+
+    fn create_test_editor(content: &str) -> Editor {
+        let buffer = Rc::new(RefCell::new(
+            Buffer::new(None, content)
+        ));
+        Editor {
+            mode: Mode::Normal,
+            selection_set: SelectionSet::default(),
+            cursor_direction: crate::components::editor::Direction::Start,
+            scroll_offset: 0,
+            rectangle: Rectangle::default(),
+            buffer,
+            title: None,
+            id: crate::components::component::ComponentId::new(),
+            current_view_alignment: None,
+            regex_highlight_rules: Vec::new(),
+            incremental_search_matches: None,
+            jumps: None,
+            normal_mode_override: None,
+            reveal: None,
+            visible_line_ranges: None,
+            copied_text_history_offset: Default::default(),
+        }
+    }
+
+    fn get_cursor_position(editor: &Editor) -> anyhow::Result<Position> {
+        let char_index = editor.get_cursor_char_index();
+        editor.buffer.borrow().char_to_position(char_index)
+    }
+
+    #[test]
+    fn test_valid_mouse_click_moves_cursor() {
+        let mut editor = create_test_editor("hello\nworld\nfoo");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Default mode is Line, so clicking will select the whole line
+        // Set to Character mode for precise cursor positioning test
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
+
+        let context = Context::default();
+        // Line number width for 3 lines: "3" = 1 digit + 1 border = 2
+        // Title height = 1 (always shows "[No title]" or actual title)
+        // Click on 'l' in "hello" - buffer column 2, screen column 4, screen row 1 (after title)
+        let result = editor.handle_mouse_click(4, 1, &context);
+
+        assert!(result.is_ok());
+        // In Character mode, cursor should be at the clicked position
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 2);
+    }
+
+    #[test]
+    fn test_click_in_line_number_area_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        editor.selection_set = SelectionSet::default()
+            .set_selections(NonEmpty::new(
+                Selection::new((CharIndex(2)..CharIndex(2)).into())
+            ));
+
+        let context = Context::default();
+        let initial_head = get_cursor_position(&editor).unwrap();
+
+        // Click in line number area (column 0) at screen row 1 (after title)
+        let result = editor.handle_mouse_click(0, 1, &context);
+
+        assert!(result.is_ok());
+        // Cursor should not have moved
+        let current_head = get_cursor_position(&editor).unwrap();
+        assert_eq!(current_head, initial_head);
+    }
+
+    #[test]
+    fn test_click_outside_rectangle_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(5, 5),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let result = editor.handle_mouse_click(0, 0, &context);
+
+        assert!(result.is_ok());
+        // Click was outside rectangle, should be ignored
+        // Cursor should remain at initial position (0,0)
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+    }
+
+    #[test]
+    fn test_click_in_insert_mode_stays_in_insert() {
+        let mut editor = create_test_editor("hello");
+        editor.mode = Mode::Insert;
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Click at screen row 1 (after title), column 4
+        let result = editor.handle_mouse_click(4, 1, &context);
+
+        assert!(result.is_ok());
+        // Should still be in Insert mode
+        assert!(matches!(editor.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn test_click_clears_multi_cursor_mode() {
+        let mut editor = create_test_editor("hello world");
+        editor.mode = Mode::MultiCursor;
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Click at screen row 1 (after title), column 4
+        let result = editor.handle_mouse_click(4, 1, &context);
+
+        assert!(result.is_ok());
+        // Should be in Normal mode now
+        assert!(matches!(editor.mode, Mode::Normal));
+    }
+
+    #[test]
+    fn test_click_past_line_end_ignored() {
+        let mut editor = create_test_editor("hello");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        let initial_head = get_cursor_position(&editor).unwrap();
+
+        // Click way past line end (column 100 when line is 5 chars)
+        // At screen row 1 (after title)
+        let result = editor.handle_mouse_click(100, 1, &context);
+
+        assert!(result.is_ok());
+        // Cursor should not move
+        let current_head = get_cursor_position(&editor).unwrap();
+        assert_eq!(current_head, initial_head);
+    }
+
+    #[test]
+    fn test_get_line_number_width() {
+        let editor = create_test_editor("line1\nline2\nline3");
+        // 3 lines -> "3" is 1 digit + 1 border = 2
+        assert_eq!(editor.get_line_number_width(), 2);
+    }
+
+    #[test]
+    fn test_click_respects_line_mode() {
+        let mut editor = create_test_editor("hello\nworld");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Line
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Line);
+
+        let context = Context::default();
+        // Click in middle of "world" on buffer line 1 (0-indexed)
+        // Line number width for 2 lines = 2, so click at column 2 + 4 = 6
+        // Screen row = title_height(1) + content_row(1) = 2
+        let result = editor.handle_mouse_click(6, 2, &context);
+
+        assert!(result.is_ok());
+        // In Line mode, clicking should select the entire line
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        let buffer = editor.buffer.borrow();
+        // Verify selection covers the whole line "world\n" (line 1)
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        let end_pos = buffer.char_to_position(range.end).unwrap();
+        assert_eq!(start_pos.line, 1);
+        assert_eq!(start_pos.column, 0); // Start of line
+        // End should be at start of next line (line 2) or end of buffer
+        assert!(end_pos.line >= 1);
+    }
+
+    #[test]
+    fn test_click_respects_word_mode() {
+        let mut editor = create_test_editor("hello world");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Word
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Word);
+
+        let context = Context::default();
+        // Click in middle of "world" (after line number)
+        // "world" starts at column 6, so click around column 8
+        // Screen row = title_height(1) + content_row(0) = 1
+        let result = editor.handle_mouse_click(8, 1, &context);
+
+        assert!(result.is_ok());
+        // In Word mode, clicking should select the word "world"
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        let buffer = editor.buffer.borrow();
+        // Verify selection is NOT empty (word is selected)
+        assert!(range.start < range.end, "Selection should expand to word");
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        let end_pos = buffer.char_to_position(range.end).unwrap();
+        assert_eq!(start_pos.line, 0);
+        assert_eq!(start_pos.column, 6); // Start of "world"
+        assert_eq!(end_pos.line, 0);
+        assert_eq!(end_pos.column, 11); // End of "world" (after 'd')
+    }
+
+    #[test]
+    fn test_click_character_mode_empty_selection() {
+        let mut editor = create_test_editor("hello world");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Character
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
+
+        let context = Context::default();
+        // Click at column 7 (after line number width of 1)
+        // This should place cursor at buffer column 6 (character 'w')
+        // Screen row = title_height(1) + content_row(0) = 1
+        let result = editor.handle_mouse_click(7, 1, &context);
+
+        assert!(result.is_ok());
+        // In Character mode, cursor should be at expected position
+        // Line number width = 1 digit + 1 border = 2
+        // Click at column 7 -> buffer column 5 (7 - 2 = 5)
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 5);
+    }
+
+    #[test]
+    fn test_click_at_line_boundary_positions_correctly() {
+        let mut editor = create_test_editor("hello\nworld");
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set to Character mode for precise positioning test
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Character);
+
+        let context = Context::default();
+        // Click at position after "hello" (column 5 + line_number_width(2) = 7)
+        // Screen row = title_height(1) + content_row(0) = 1
+        let result = editor.handle_mouse_click(7, 1, &context);
+
+        assert!(result.is_ok());
+        // In Character mode, cursor should be at position 5 (end of "hello")
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 5);
+
+        // In Character mode, selection contains the clicked character (not empty)
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        // Character mode selects one character, so range length should be >= 1
+        assert!(range.end.0 - range.start.0 >= 1, "Character mode should select at least one character");
+    }
+
+    #[test]
+    fn test_click_on_last_line_positions_correctly() {
+        let mut editor = create_test_editor("hello\nworld");  // "world" has no trailing \n
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+        // Set mode to Line
+        editor.selection_set = editor.selection_set.set_mode(SelectionMode::Line);
+
+        let context = Context::default();
+        // Click on last line "world" at column 2 ('r')
+        // Line number width for 2 lines = 2, so screen column = 2 + 2 = 4
+        // Screen row = title_height(1) + content_row(1) = 2
+        let result = editor.handle_mouse_click(4, 2, &context);
+
+        assert!(result.is_ok());
+        // In Line mode, clicking should select the entire line "world"
+        let selection = editor.selection_set.primary_selection();
+        let range = selection.extended_range();
+        let buffer = editor.buffer.borrow();
+        let start_pos = buffer.char_to_position(range.start).unwrap();
+        assert_eq!(start_pos.line, 1);
+        assert_eq!(start_pos.column, 0); // Start of line
+        // Selection should not be empty (line is selected)
+        assert!(range.start < range.end, "Selection should expand to line in Line mode");
+    }
+
+    #[test]
+    fn test_click_with_title_respects_title_offset() {
+        // This test verifies that mouse click correctly handles the title bar offset
+        let mut editor = create_test_editor("line0\nline1\nline2");
+        // Set a title - this will make window_title_height return 1
+        editor.title = Some("test.txt".to_string());
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Line number width for 3 lines: "3" = 1 digit + 1 border = 2
+        // With 1-line title, content starts at screen row 1
+        // Click on first content line (screen row 1), column 2 (buffer column 0)
+        let result = editor.handle_mouse_click(2, 1, &context);
+
+        assert!(result.is_ok());
+        // Cursor should be at line 0 (first buffer line), not line 1
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0, "Cursor should be at buffer line 0, not line 1 (title offset bug)");
+        assert_eq!(position.column, 0);
+    }
+
+    #[test]
+    fn test_click_in_title_area_ignored() {
+        // This test verifies that clicks in the title area are ignored
+        let mut editor = create_test_editor("hello\nworld");
+        editor.title = Some("test.txt".to_string());
+        editor.rectangle = Rectangle {
+            origin: Position::new(0, 0),
+            width: 20,
+            height: 10,
+        };
+
+        let context = Context::default();
+        // Click in title area (screen row 0) - should be ignored
+        let result = editor.handle_mouse_click(5, 0, &context);
+
+        assert!(result.is_ok());
+        // Cursor should remain at initial position (0,0)
+        let position = get_cursor_position(&editor).unwrap();
+        assert_eq!(position.line, 0);
+        assert_eq!(position.column, 0);
+    }
+}
+
